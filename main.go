@@ -34,10 +34,11 @@ func parseDocumentationFormat(
 	parts *RepoParts,
 ) (DocumentationFormat, error) {
 	var docDir string
+
 	if parts.directory == "" {
-		docDir = fmt.Sprintf("%s/%s", cloneDir, parts.directory)
-	} else {
 		docDir = fmt.Sprintf("%s/docs", cloneDir)
+	} else {
+		docDir = fmt.Sprintf("%s/%s", cloneDir, parts.directory)
 	}
 
 	cmd := exec.Command("ls", docDir)
@@ -160,7 +161,6 @@ func cloneRepo(parts *RepoParts) (string, error) {
 
 	log.Printf("Cloning %s/%s/%s", parts.provider, parts.owner, parts.repo)
 
-	// check if directory exists
 	cmd := exec.Command("ls", targetDir)
 	err := cmd.Run()
 	if err == nil {
