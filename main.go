@@ -15,59 +15,83 @@ type RepoParts struct {
 	directory string
 }
 
+type DirectoryParts struct {
+	base string
+	doc  string
+}
+
 type DocumentationFormat int
 
 const (
 	Sphinx DocumentationFormat = iota
 	MkDocs
-	Doxygen
+	Docusaurus
+	GitBook
 )
 
 var documentationName = map[DocumentationFormat]string{
-	Sphinx:  "sphinx",
-	MkDocs:  "mkdocs",
-	Doxygen: "doxygen",
+	Sphinx:     "sphinx",
+	MkDocs:     "mkdocs",
+	Docusaurus: "docusaurus",
+	GitBook:    "gitbook",
+}
+
+func generatePDF(dirParts *DirectoryParts, docType DocumentationFormat) error {
+	var cmd []string
+
+	// TODO: investigate if relative doc path is needed instead
+	// TODO: sphinx requires python env to match cloned env
+	// need to support requirements.txt, poetry, uv
+	switch docType {
+	case Sphinx:
+		cmd = []string{
+			"sphinx-build",
+			"-M",
+			"simplepdf",
+			dirParts.doc,
+		}
+	case MkDocs:
+		cmd = []string{"mkdocs", "build"}
+	case Docusaurus:
+		cmd = []string{"npm", "run", "build"}
+	case GitBook:
+		cmd = []string{"gitbook", "build"}
+	}
+
+	_, err := RunCommand(cmd, dirParts.doc)
+	return err
+
 }
 
 func parseDocumentationFormat(
-	cloneDir string,
-	parts *RepoParts,
+	dirParts *DirectoryParts,
 ) (DocumentationFormat, error) {
-	var docDir string
-
-	if parts.directory == "" {
-		docDir = fmt.Sprintf("%s/docs", cloneDir)
-	} else {
-		docDir = fmt.Sprintf("%s/%s", cloneDir, parts.directory)
-	}
-
-	cmd := exec.Command("ls", docDir)
-	cmd.Dir = cloneDir
-	log.Printf("Executing: %s", strings.Join(cmd.Args, " "))
-	out, err := cmd.Output()
+	out, err := RunCommand([]string{"ls", dirParts.doc}, dirParts.base)
 	if err != nil {
 		return -1, err
 	}
 
 	files := strings.Split(string(out), "\n")
 	for _, file := range files {
-		if strings.HasSuffix(file, "conf.py") {
+		if strings.HasSuffix(file, "conf.py") ||
+			strings.HasSuffix(file, "index.rst") {
 			log.Printf("Found Sphinx documentation: %s", file)
 			return Sphinx, nil
 		}
 
-		if strings.HasSuffix(file, "index.rst") {
-			log.Printf("Found Sphinx documentation: %s", file)
-			return Sphinx, nil
-		}
-
-		if strings.HasSuffix(file, "mkdocs.yml") {
+		if strings.HasSuffix(file, "mkdocs.yml") ||
+			strings.HasSuffix(file, "mkdocs.yaml") {
 			log.Printf("Found MkDocs documentation: %s", file)
 			return MkDocs, nil
 		}
-		if strings.HasSuffix(file, "Doxyfile") {
-			log.Printf("Found Doxygen documentation: %s", file)
-			return Doxygen, nil
+		if strings.HasSuffix(file, "docusaurus.config.js") {
+			log.Printf("Found Docusaurus documentation: %s", file)
+			return Docusaurus, nil
+		}
+		if strings.HasSuffix(file, "gitbook.yml") ||
+			strings.HasSuffix(file, "gitbook.yaml") {
+			log.Printf("Found GitBook documentation: %s", file)
+			return GitBook, nil
 		}
 	}
 
@@ -142,69 +166,88 @@ func parseRepoURL(url string) (*RepoParts, error) {
 
 }
 
-func pullRepo(targetDir string) error {
-	cmd := exec.Command("git", "pull")
-	cmd.Dir = targetDir
-	log.Printf("Executing: %s", strings.Join(cmd.Args, " "))
-	err := cmd.Run()
-	if err != nil {
-		return err
+func RunCommand(args []string, workingDir string) ([]byte, error) {
+	cmd := exec.Command(args[0], args[1:]...)
+	if workingDir != "" {
+		cmd.Dir = workingDir
 	}
-	return nil
+	log.Printf("Executing: %s", strings.Join(cmd.Args, " "))
+	return cmd.Output()
 }
 
-func cloneRepo(parts *RepoParts) (string, error) {
+func pullRepo(targetDir string) error {
+	_, err := RunCommand([]string{"git", "pull"}, targetDir)
+	return err
+}
+
+func parseRepoDir(parts *RepoParts) (*DirectoryParts, error) {
+	baseDir := "/tmp/pdfgen"
+	targetDir := fmt.Sprintf(
+		"%s/%s", baseDir, parts.repo,
+	)
+	var docDir string
+	if parts.directory == "" {
+		docDir = fmt.Sprintf("%s/docs", targetDir)
+	} else {
+		docDir = fmt.Sprintf("%s/%s", targetDir, parts.directory)
+	}
+
+	dirParts := &DirectoryParts{
+		base: targetDir,
+		doc:  docDir,
+	}
+
+	return dirParts, nil
+}
+
+func updateRepo(parts *RepoParts) error {
+	// pulls or clones depending on if the repo exists
 	baseDir := "/tmp/pdfgen"
 	targetDir := fmt.Sprintf(
 		"%s/%s", baseDir, parts.repo,
 	)
 
-	log.Printf("Cloning %s/%s/%s", parts.provider, parts.owner, parts.repo)
-
-	cmd := exec.Command("ls", targetDir)
-	err := cmd.Run()
+	log.Printf("Updating %s/%s/%s", parts.provider, parts.owner, parts.repo)
+	_, err := RunCommand([]string{"ls"}, targetDir)
 	if err == nil {
 		log.Printf("Directory %s already exists", targetDir)
 		err = pullRepo(targetDir)
 		if err != nil {
-			return "", err
+			return err
 		}
 		log.Printf("Pulled latest changes for %s", targetDir)
-		return targetDir, nil
-
+		return nil
 	}
 
-	log.Printf("Creating directory %s", baseDir)
-	err = exec.Command("mkdir", "-p", baseDir).Run()
+	_, err = RunCommand([]string{"mkdir", "-p", baseDir}, "")
 	if err != nil {
-		return "", err
+		return err
 	}
 
+	return cloneRepo(parts, baseDir)
+}
+
+func cloneRepo(parts *RepoParts, baseDir string) error {
 	baseURL := fmt.Sprintf(
 		"https://%s/%s/%s.git",
 		parts.provider,
 		parts.owner,
 		parts.repo,
 	)
-	cmd = exec.Command(
-		"git",
-		"clone",
-		baseURL,
-		"-b",
-		parts.branch,
-		"--single-branch",
-		"--depth",
-		"1",
+	_, err := RunCommand(
+		[]string{
+			"git",
+			"clone",
+			baseURL,
+			"-b",
+			parts.branch,
+			"--single-branch",
+			"--depth",
+			"1",
+		},
+		baseDir,
 	)
-	cmd.Dir = "/tmp/pdfgen"
-
-	log.Printf("Executing: %s", strings.Join(cmd.Args, " "))
-	err = cmd.Run()
-	if err != nil {
-		return "", err
-	}
-
-	return targetDir, nil
+	return err
 }
 
 func main() {
@@ -215,18 +258,28 @@ func main() {
 		log.Fatal("Error parsing URL:", err)
 	}
 
-	fmt.Printf("%+v\n", parsedURL)
-	cloneDir, err := cloneRepo(parsedURL)
+	err = updateRepo(parsedURL)
 	if err != nil {
-		log.Fatal("Error cloning repo:", err)
+		log.Fatal("Error updating repo:", err)
 	}
 
-	docName, err := parseDocumentationFormat(cloneDir, parsedURL)
+	dirParts, err := parseRepoDir(parsedURL)
+	if err != nil {
+		log.Fatal("Error parsing repo directory:", err)
+	}
+
+	docName, err := parseDocumentationFormat(dirParts)
 	if err != nil {
 		log.Fatal("Error parsing documentation format:", err)
 	}
 
 	fmt.Printf("Documentation format: %s\n", documentationName[docName])
-	// run tool to generate pdf
+	err = generatePDF(dirParts, docName)
+	if err != nil {
+		log.Fatal("Error generating PDF:", err)
+	}
+
 	// return pdf to client
+
+	// cleanup
 }
