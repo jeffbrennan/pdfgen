@@ -28,11 +28,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY pyproject.toml uv.lock* ./
 RUN uv sync --locked
 
-WORKDIR /build/src
+WORKDIR /build/src/pdfgen
 COPY go.mod ./
 RUN go mod download
 COPY . .
 
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/bin/app .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o .
 
-ENTRYPOINT ["/usr/bin/app"]
+EXPOSE 8081
+
+CMD ["./pdfgen"]

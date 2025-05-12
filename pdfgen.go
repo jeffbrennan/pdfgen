@@ -23,6 +23,13 @@ type DirectoryParts struct {
 	doc  string
 }
 
+type PDFGenResponse struct {
+	parts    *RepoParts
+	dirParts *DirectoryParts
+	pdfPath  string
+	pdfBytes []byte
+}
+
 type DocumentationFormat int
 type PythonEnv int
 type EnvType int
@@ -122,9 +129,9 @@ func handleSphinxIssuesVersionKeyError(dirParts *DirectoryParts) error {
 	// workaround for airflow build - should generalize after testing other sphinx builds
 	extDir := "devel-common/src/sphinx_exts/"
 	out, err := RunCommand([]string{"ls", extDir}, dirParts.root)
-	fmt.Print(out)
+	log.Print(out)
 	if err != nil {
-		fmt.Print("Error running ls: ", err)
+		log.Print("Error running ls: ", err)
 		return err
 	}
 
@@ -170,11 +177,11 @@ func handleSphinxIssues(dirParts *DirectoryParts) error {
 	return err
 }
 
-func generateSphinxPDF(dirParts *DirectoryParts) error {
+func generateSphinxPDF(parts *RepoParts, dirParts *DirectoryParts) (string, error) {
 	err := handleSphinxIssues(dirParts)
 	if err != nil {
 		log.Printf("Error handling Sphinx issues: %s", err)
-		return err
+		return "", err
 	}
 
 	// TODO: handle case where docs group does not exist
@@ -192,52 +199,64 @@ func generateSphinxPDF(dirParts *DirectoryParts) error {
 		dirParts.base,
 	)
 
-	fmt.Printf("Sphinx build output: %s\n", out)
+	log.Printf("Sphinx build output: %s\n", out)
 	if err != nil {
 		log.Printf("Error running sphinx-build: %s", out)
 		log.Printf("Error: %s", err)
-		return err
+		return "", err
 	}
 
+	outputName := parts.repo + "_" + strings.ReplaceAll(parts.directory, "/", "_")
+
+	// TODO: figure out successful pdf output but no pdf file
 	out, err = RunCommand(
 		[]string{
 			"/bin/sh",
 			"-c",
-			"pdflatex -interaction=nonstopmode $(find -maxdepth 1 -name '*.tex' | head -n 1)",
+			"pdflatex -interaction=nonstopmode -jobname=" + outputName + " $(find -maxdepth 1 -name '*.tex' | head -n 1)",
 		},
 		dirParts.base+"/_build/latex",
 	)
-	if err != nil {
-		log.Printf("Error running pdflatex: %s", out)
-		log.Printf("Error: %s", err)
-		return err
-	}
+	log.Printf("finished running pdflatex in %s\n", dirParts.base+"/_build/latex")
 
-	return nil
+	// ignore for now
+	log.Printf("uncaught pdflatex output: %s\n", out)
+	log.Printf("uncaught pdflatex error: %s\n", err)
+
+	// if err != nil {
+	// 	log.Printf("Error running pdflatex: %s", out)
+	// 	log.Printf("Error: %s", err)
+	// 	return "", err
+	// }
+
+	// TODO: investigate double pdf extension
+	pdfPath := dirParts.base + "/_build/latex/" + outputName + ".pdf"
+	log.Printf("PDF path: %s", pdfPath)
+	return pdfPath, nil
 }
 
-func generateMkDocsPDF(dirParts *DirectoryParts) error {
-	return fmt.Errorf("MkDocs PDF generation not implemented")
+func generateMkDocsPDF(dirParts *DirectoryParts) (string, error) {
+	return "", fmt.Errorf("MkDocs PDF generation not implemented")
 }
 
-func generateDocusaurusPDF(dirParts *DirectoryParts) error {
-	return fmt.Errorf("docusaurus PDF generation not implemented")
+func generateDocusaurusPDF(dirParts *DirectoryParts) (string, error) {
+	return "", fmt.Errorf("docusaurus PDF generation not implemented")
 }
 
-func generateGitBookPDF(dirParts *DirectoryParts) error {
-	return fmt.Errorf("GitBook PDF generation not implemented")
+func generateGitBookPDF(dirParts *DirectoryParts) (string, error) {
+	return "", fmt.Errorf("GitBook PDF generation not implemented")
 }
 
-func generatePDF(dirParts *DirectoryParts, docType DocumentationFormat) error {
+func generatePDF(parts *RepoParts, dirParts *DirectoryParts, docType DocumentationFormat) (string, error) {
 
 	envType, err := parseEnvType(dirParts)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if envType == python {
 		pythonEnv, err := parsePythonEnv(dirParts)
 		if err != nil {
-			return err
+			return "", err
 		}
 
 		setupPythonEnv(dirParts, pythonEnv)
@@ -245,7 +264,7 @@ func generatePDF(dirParts *DirectoryParts, docType DocumentationFormat) error {
 
 	switch docType {
 	case Sphinx:
-		return generateSphinxPDF(dirParts)
+		return generateSphinxPDF(parts, dirParts)
 	case MkDocs:
 		return generateMkDocsPDF(dirParts)
 	case Docusaurus:
@@ -254,7 +273,7 @@ func generatePDF(dirParts *DirectoryParts, docType DocumentationFormat) error {
 		return generateGitBookPDF(dirParts)
 	}
 
-	return err
+	return "", fmt.Errorf("unknown documentation format")
 
 }
 
@@ -507,45 +526,49 @@ func cloneRepo(parts *RepoParts, baseDir string) error {
 
 func cleanupRepo(parts *RepoParts) error {
 	log.Printf("Cleaning up %s/%s/%s", parts.provider, parts.owner, parts.repo)
-	_, err := RunCommand([]string{"rm", "-rf", "./repos/" + parts.repo}, "")
-	if err != nil {
-		return err
-	}
-
-	return nil
+	_, err := RunCommand([]string{"rm", "-rf", "./repos/" + parts.repo}, "/build/src/pdfgen/")
+	return err
 }
 
-func main() {
-	// receive url from client
-	url := "https://github.com/apache/airflow/tree/main/airflow-core/docs"
-	parsedURL, err := parseRepoURL(url)
+func pdfgen(url string) (PDFGenResponse, error) {
+	parts, err := parseRepoURL(url)
 	if err != nil {
-		log.Fatal("Error parsing URL:", err)
+		return PDFGenResponse{}, fmt.Errorf("error parsing URL: %s", err)
 	}
 
-	err = updateRepo(parsedURL)
+	err = updateRepo(parts)
 	if err != nil {
-		log.Fatal("Error updating repo:", err)
+		return PDFGenResponse{}, fmt.Errorf("error updating repo: %s", err)
 	}
 
-	dirParts, err := parseRepoDir(parsedURL)
+	dirParts, err := parseRepoDir(parts)
 	if err != nil {
-		log.Fatal("Error parsing repo directory:", err)
+		return PDFGenResponse{}, fmt.Errorf("error parsing repo directory: %s", err)
 	}
 
 	docName, err := parseDocumentationFormat(dirParts)
 	if err != nil {
-		log.Fatal("Error parsing documentation format:", err)
+		return PDFGenResponse{}, fmt.Errorf("error parsing documentation format: %s", err)
 	}
 
-	fmt.Printf("Documentation format: %s\n", documentationName[docName])
-	err = generatePDF(dirParts, docName)
+	log.Printf("Documentation format: %s\n", documentationName[docName])
+	pdfPath, err := generatePDF(parts, dirParts, docName)
 	if err != nil {
-		log.Fatal("Error generating PDF:", err)
+		return PDFGenResponse{}, fmt.Errorf("error generating PDF: %s", err)
 	}
 
-	// return pdf to client
+	log.Printf("reading PDF file: %s", pdfPath)
+	pdfBytes, err := os.ReadFile(pdfPath)
 
-	// cleanup
-	cleanupRepo(parsedURL)
+	if err != nil {
+		return PDFGenResponse{}, fmt.Errorf("error reading PDF file: %s", err)
+	}
+
+	return PDFGenResponse{
+		parts:    parts,
+		dirParts: dirParts,
+		pdfPath:  pdfPath,
+		pdfBytes: pdfBytes,
+	}, nil
+
 }
