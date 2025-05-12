@@ -1,2 +1,9 @@
 # pdfgen
-generate pdfs from common documentation formats for better notetaking
+
+generate pdfs from common documentation frameworks for better notetaking
+
+## supported frameworks
+
+### sphinx
+
+sphinx-build latex -> pdflatex -> pdf
