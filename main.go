@@ -505,6 +505,16 @@ func cloneRepo(parts *RepoParts, baseDir string) error {
 	return err
 }
 
+func cleanupRepo(parts *RepoParts) error {
+	log.Printf("Cleaning up %s/%s/%s", parts.provider, parts.owner, parts.repo)
+	_, err := RunCommand([]string{"rm", "-rf", "./repos/" + parts.repo}, "")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func main() {
 	// receive url from client
 	url := "https://github.com/apache/airflow/tree/main/airflow-core/docs"
@@ -537,4 +547,5 @@ func main() {
 	// return pdf to client
 
 	// cleanup
+	cleanupRepo(parsedURL)
 }
