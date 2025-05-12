@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -16,17 +18,31 @@ type RepoParts struct {
 }
 
 type DirectoryParts struct {
+	root string
 	base string
 	doc  string
 }
 
 type DocumentationFormat int
+type PythonEnv int
+type EnvType int
 
 const (
 	Sphinx DocumentationFormat = iota
 	MkDocs
 	Docusaurus
 	GitBook
+)
+
+const (
+	pip PythonEnv = iota
+	poetry
+	uv
+)
+
+const (
+	python EnvType = iota
+	node
 )
 
 var documentationName = map[DocumentationFormat]string{
@@ -36,30 +52,259 @@ var documentationName = map[DocumentationFormat]string{
 	GitBook:    "gitbook",
 }
 
-func generatePDF(dirParts *DirectoryParts, docType DocumentationFormat) error {
-	var cmd []string
+func setupPythonEnvPip(dirParts *DirectoryParts) error {
 
-	// TODO: investigate if relative doc path is needed instead
-	// TODO: sphinx requires python env to match cloned env
-	// need to support requirements.txt, poetry, uv
-	switch docType {
-	case Sphinx:
-		cmd = []string{
-			"sphinx-build",
-			"-M",
-			"simplepdf",
-			dirParts.doc,
-		}
-	case MkDocs:
-		cmd = []string{"mkdocs", "build"}
-	case Docusaurus:
-		cmd = []string{"npm", "run", "build"}
-	case GitBook:
-		cmd = []string{"gitbook", "build"}
+	_, err := RunCommand(
+		[]string{"uv", "pip", "install", "-r", "requirements.txt"},
+		dirParts.base,
+	)
+	return err
+
+}
+
+func setupPythonEnvPoetry(dirParts *DirectoryParts) error {
+	// TODO: parse pyproject.toml to look for a docs group
+	_, err := RunCommand(
+		[]string{"uvx", "migrate-to-uv"},
+		dirParts.base,
+	)
+
+	if err != nil {
+		return err
 	}
 
-	_, err := RunCommand(cmd, dirParts.doc)
+	_, err = RunCommand(
+		[]string{"uv", "sync"},
+		dirParts.base,
+	)
+
 	return err
+}
+
+func setupPythonEnvUV(dirParts *DirectoryParts) error {
+	_, err := RunCommand(
+		[]string{"uv", "sync"},
+		dirParts.base,
+	)
+
+	return err
+}
+
+func setupPythonEnv(dirParts *DirectoryParts, env PythonEnv) error {
+
+	_, err := RunCommand(
+		[]string{"uv", "venv"},
+		dirParts.base,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	switch env {
+	case pip:
+		return setupPythonEnvPip(dirParts)
+	case poetry:
+		return setupPythonEnvPoetry(dirParts)
+	case uv:
+		return setupPythonEnvUV(dirParts)
+	default:
+		return fmt.Errorf("unknown python env")
+	}
+
+}
+
+func setupNodeEnv(dirParts *DirectoryParts) error {
+	return fmt.Errorf("node env setup not implemented")
+}
+
+func handleSphinxIssuesVersionKeyError(dirParts *DirectoryParts) error {
+	// workaround for airflow build - should generalize after testing other sphinx builds
+	extDir := "devel-common/src/sphinx_exts/"
+	out, err := RunCommand([]string{"ls", extDir}, dirParts.root)
+	fmt.Print(out)
+	if err != nil {
+		fmt.Print("Error running ls: ", err)
+		return err
+	}
+
+	files := strings.Split(string(out), "\n")
+	for _, file := range files {
+		log.Printf("Found file: %s", file)
+		if !strings.Contains(file, "substitution_extensions.py") {
+			continue
+		}
+
+		filePath := dirParts.root + "/" + extDir + file
+		fileHandle, err := os.Open(filePath)
+		if err != nil {
+			return err
+		}
+		defer fileHandle.Close()
+
+		contentBytes, err := io.ReadAll(fileHandle)
+		if err != nil {
+			log.Printf("Error reading file: %s", err)
+			return err
+		}
+
+		log.Print("writing file...")
+		newFileContents := strings.ReplaceAll(
+			string(contentBytes),
+			"version = substitution_defs[\"version\"].astext()",
+			"version = substitution_defs.get(\"version\", \"unknown\")",
+		)
+		err = os.WriteFile(filePath, []byte(newFileContents), 0644)
+		if err != nil {
+			print("Error writing file: %s", err)
+			return err
+		}
+
+	}
+
+	return nil
+}
+
+func handleSphinxIssues(dirParts *DirectoryParts) error {
+	err := handleSphinxIssuesVersionKeyError(dirParts)
+	return err
+}
+
+func generateSphinxPDF(dirParts *DirectoryParts) error {
+	err := handleSphinxIssues(dirParts)
+	if err != nil {
+		log.Printf("Error handling Sphinx issues: %s", err)
+		return err
+	}
+
+	// TODO: handle case where docs group does not exist
+	out, err := RunCommand([]string{
+		"uv",
+		"run",
+		"--group",
+		"docs",
+		"sphinx-build",
+		"-M",
+		"latex",
+		dirParts.doc,
+		"_build/",
+	},
+		dirParts.base,
+	)
+
+	fmt.Printf("Sphinx build output: %s\n", out)
+	if err != nil {
+		log.Printf("Error running sphinx-build: %s", out)
+		log.Printf("Error: %s", err)
+		return err
+	}
+
+	out, err = RunCommand(
+		[]string{
+			"/bin/sh",
+			"-c",
+			"pdflatex -interaction=nonstopmode $(find -maxdepth 1 -name '*.tex' | head -n 1)",
+		},
+		dirParts.base+"/_build/latex",
+	)
+	if err != nil {
+		log.Printf("Error running pdflatex: %s", out)
+		log.Printf("Error: %s", err)
+		return err
+	}
+
+	return nil
+}
+
+func generateMkDocsPDF(dirParts *DirectoryParts) error {
+	return fmt.Errorf("MkDocs PDF generation not implemented")
+}
+
+func generateDocusaurusPDF(dirParts *DirectoryParts) error {
+	return fmt.Errorf("docusaurus PDF generation not implemented")
+}
+
+func generateGitBookPDF(dirParts *DirectoryParts) error {
+	return fmt.Errorf("GitBook PDF generation not implemented")
+}
+
+func generatePDF(dirParts *DirectoryParts, docType DocumentationFormat) error {
+
+	envType, err := parseEnvType(dirParts)
+	if err != nil {
+		return err
+	}
+	if envType == python {
+		pythonEnv, err := parsePythonEnv(dirParts)
+		if err != nil {
+			return err
+		}
+
+		setupPythonEnv(dirParts, pythonEnv)
+	}
+
+	switch docType {
+	case Sphinx:
+		return generateSphinxPDF(dirParts)
+	case MkDocs:
+		return generateMkDocsPDF(dirParts)
+	case Docusaurus:
+		return generateDocusaurusPDF(dirParts)
+	case GitBook:
+		return generateGitBookPDF(dirParts)
+	}
+
+	return err
+
+}
+
+func parseEnvType(dirParts *DirectoryParts) (EnvType, error) {
+	out, err := RunCommand([]string{"ls"}, dirParts.base)
+	if err != nil {
+		return -1, err
+	}
+
+	files := strings.Split(string(out), "\n")
+	for _, file := range files {
+		if strings.HasSuffix(file, "package.json") {
+			log.Printf("Found node env: %s", file)
+			return node, nil
+		}
+		if strings.HasSuffix(file, "requirements.txt") ||
+			strings.HasSuffix(file, "poetry.lock") ||
+			strings.HasSuffix(file, "uv.lock") ||
+			strings.HasSuffix(file, "pyproject.toml") {
+			log.Printf("Found python env: %s", file)
+			return python, nil
+		}
+	}
+
+	return -1, fmt.Errorf("unknown env")
+}
+
+func parsePythonEnv(dirParts *DirectoryParts) (PythonEnv, error) {
+	out, err := RunCommand([]string{"ls"}, dirParts.base)
+	if err != nil {
+		return -1, err
+	}
+
+	files := strings.Split(string(out), "\n")
+	for _, file := range files {
+		if strings.HasSuffix(file, "requirements.txt") {
+			log.Printf("Found pip env: %s", file)
+			return pip, nil
+		}
+
+		if strings.HasSuffix(file, "uv.lock") {
+			log.Printf("Found uv: %s", file)
+			return uv, nil
+		}
+		if strings.HasSuffix(file, "poetry.lock") || strings.HasSuffix(file, "pyproject.toml") {
+			return poetry, nil
+		}
+	}
+
+	return -1, fmt.Errorf("unknown env")
 
 }
 
@@ -181,20 +426,30 @@ func pullRepo(targetDir string) error {
 }
 
 func parseRepoDir(parts *RepoParts) (*DirectoryParts, error) {
-	baseDir := "/tmp/pdfgen"
-	targetDir := fmt.Sprintf(
-		"%s/%s", baseDir, parts.repo,
-	)
 	var docDir string
+	var baseDir string
+
+	rootDir := fmt.Sprintf(
+		"%s/%s", "./repos", parts.repo,
+	)
+
 	if parts.directory == "" {
-		docDir = fmt.Sprintf("%s/docs", targetDir)
+		baseDir = rootDir
+		docDir = "docs/"
 	} else {
-		docDir = fmt.Sprintf("%s/%s", targetDir, parts.directory)
+
+		docParts := strings.Split(parts.directory, "/")
+		// strip last element
+		baseDir = rootDir + "/" + strings.Join(docParts[:len(docParts)-1], "/")
+		log.Printf("Base dir: %s", baseDir)
+
+		docDir = docParts[len(docParts)-1] + "/"
 	}
 
 	dirParts := &DirectoryParts{
-		base: targetDir,
-		doc:  docDir,
+		root: rootDir, //  .../airflow
+		base: baseDir, // .../airflow/airflow-core/
+		doc:  docDir,  // docs/
 	}
 
 	return dirParts, nil
@@ -202,7 +457,7 @@ func parseRepoDir(parts *RepoParts) (*DirectoryParts, error) {
 
 func updateRepo(parts *RepoParts) error {
 	// pulls or clones depending on if the repo exists
-	baseDir := "/tmp/pdfgen"
+	baseDir := "./repos"
 	targetDir := fmt.Sprintf(
 		"%s/%s", baseDir, parts.repo,
 	)
