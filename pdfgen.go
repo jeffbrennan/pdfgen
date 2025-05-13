@@ -525,8 +525,9 @@ func cloneRepo(parts *RepoParts, baseDir string) error {
 }
 
 func cleanupRepo(parts *RepoParts) error {
+	repoPath := "/build/src/pdfgen/repos/" + parts.repo
 	log.Printf("Cleaning up %s/%s/%s", parts.provider, parts.owner, parts.repo)
-	_, err := RunCommand([]string{"rm", "-rf", "./repos/" + parts.repo}, "/build/src/pdfgen/")
+	_, err := RunCommand([]string{"rm", "-rf", repoPath}, "")
 	return err
 }
 
