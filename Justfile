@@ -2,7 +2,7 @@ up:
     docker compose up --build -d
 
 term:
-    docker run -it --entrypoint /bin/bash pdfgen
+    docker exec -it pdfgen bash
 
 front:
     @ CONTAINER_COUNT=$(docker ps | grep pdfgen | wc -l); \
