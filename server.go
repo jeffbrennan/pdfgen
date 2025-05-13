@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 
 	"github.com/gorilla/mux"
 )
@@ -40,8 +41,10 @@ func generatePDFHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fileName := filepath.Base(response.pdfPath)
+
 	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", "attachment; filename="+response.pdfPath)
+	w.Header().Set("Content-Disposition", "attachment; filename="+fileName)
 	w.WriteHeader(http.StatusOK)
 	w.Write(response.pdfBytes)
 
