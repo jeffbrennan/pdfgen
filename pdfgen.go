@@ -98,7 +98,7 @@ func setupPythonEnvUV(dirParts *DirectoryParts) error {
 }
 
 func setupPythonEnv(dirParts *DirectoryParts, env PythonEnv) error {
-
+	publishLog("Setting up Python environment...")
 	_, err := RunCommand(
 		[]string{"uv", "venv"},
 		dirParts.base,
@@ -137,7 +137,6 @@ func handleSphinxIssuesVersionKeyError(dirParts *DirectoryParts) error {
 
 	files := strings.Split(string(out), "\n")
 	for _, file := range files {
-		log.Printf("Found file: %s", file)
 		if !strings.Contains(file, "substitution_extensions.py") {
 			continue
 		}
@@ -185,6 +184,7 @@ func generateSphinxPDF(parts *RepoParts, dirParts *DirectoryParts) (string, erro
 	}
 
 	// TODO: handle case where docs group does not exist
+	publishLog("Generating docs as Latex...")
 	out, err := RunCommand([]string{
 		"uv",
 		"run",
@@ -208,7 +208,7 @@ func generateSphinxPDF(parts *RepoParts, dirParts *DirectoryParts) (string, erro
 
 	outputName := parts.repo + "_" + strings.ReplaceAll(parts.directory, "/", "_")
 
-	// TODO: figure out successful pdf output but no pdf file
+	publishLog("Converting Latex to PDF...")
 	out, err = RunCommand(
 		[]string{
 			"/bin/sh",
@@ -229,7 +229,6 @@ func generateSphinxPDF(parts *RepoParts, dirParts *DirectoryParts) (string, erro
 	// 	return "", err
 	// }
 
-	// TODO: investigate double pdf extension
 	pdfPath := dirParts.base + "/_build/latex/" + outputName + ".pdf"
 	log.Printf("PDF path: %s", pdfPath)
 	return pdfPath, nil
@@ -248,7 +247,7 @@ func generateGitBookPDF(dirParts *DirectoryParts) (string, error) {
 }
 
 func generatePDF(parts *RepoParts, dirParts *DirectoryParts, docType DocumentationFormat) (string, error) {
-
+	publishLog("Generating PDF...")
 	envType, err := parseEnvType(dirParts)
 	if err != nil {
 		return "", err
@@ -302,6 +301,7 @@ func parseEnvType(dirParts *DirectoryParts) (EnvType, error) {
 }
 
 func parsePythonEnv(dirParts *DirectoryParts) (PythonEnv, error) {
+	publishLog("Parsing Python env...")
 	out, err := RunCommand([]string{"ls"}, dirParts.base)
 	if err != nil {
 		return -1, err
@@ -339,7 +339,13 @@ func parseDocumentationFormat(
 	for _, file := range files {
 		if strings.HasSuffix(file, "conf.py") ||
 			strings.HasSuffix(file, "index.rst") {
-			log.Printf("Found Sphinx documentation: %s", file)
+			sphinxMsg := fmt.Sprintf(
+				"Found Sphinx documentation: %s",
+				file,
+			)
+			log.Print(sphinxMsg)
+			publishLog(sphinxMsg)
+
 			return Sphinx, nil
 		}
 
@@ -481,7 +487,16 @@ func updateRepo(parts *RepoParts) error {
 		"%s/%s", baseDir, parts.repo,
 	)
 
-	log.Printf("Updating %s/%s/%s", parts.provider, parts.owner, parts.repo)
+	updateRepoMsg := fmt.Sprintf(
+		"Updating %s/%s/%s...",
+		parts.provider,
+		parts.owner,
+		parts.repo,
+	)
+
+	log.Print(updateRepoMsg)
+	publishLog(updateRepoMsg)
+
 	_, err := RunCommand([]string{"ls"}, targetDir)
 	if err == nil {
 		log.Printf("Directory %s already exists", targetDir)
@@ -489,7 +504,6 @@ func updateRepo(parts *RepoParts) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("Pulled latest changes for %s", targetDir)
 		return nil
 	}
 
@@ -564,6 +578,7 @@ func pdfgen(url string) (PDFGenResponse, error) {
 	if err != nil {
 		return PDFGenResponse{}, fmt.Errorf("error reading PDF file: %s", err)
 	}
+	publishLog("done!")
 
 	return PDFGenResponse{
 		parts:    parts,

@@ -5,20 +5,45 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"sync"
 
 	"github.com/gorilla/mux"
 )
 
-func main() {
-	r := mux.NewRouter()
+var (
+	logChannel = make(chan string)
+	logMu      sync.Mutex
+)
 
-	r.HandleFunc("/generate-pdf", generatePDFHandler).Methods("POST")
+func publishLog(message string) {
+	logMu.Lock()
+	defer logMu.Unlock()
+	select {
+	case logChannel <- message:
+	default:
+	}
+}
 
-	fs := http.FileServer(http.Dir("./static"))
-	r.PathPrefix("/").Handler(fs)
+func streamLogsHandler(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
 
-	fmt.Println("Starting server on :8081")
-	log.Fatal(http.ListenAndServe(":8081", r))
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	for {
+		select {
+		case msg := <-logChannel:
+			fmt.Fprintf(w, "data: %s\n\n", msg)
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 func generatePDFHandler(w http.ResponseWriter, r *http.Request) {
@@ -49,4 +74,16 @@ func generatePDFHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(response.pdfBytes)
 
 	cleanupRepo(response.parts)
+}
+
+func main() {
+	r := mux.NewRouter()
+	r.HandleFunc("/generate-pdf", generatePDFHandler).Methods("POST")
+	r.HandleFunc("/stream-logs", streamLogsHandler)
+
+	fs := http.FileServer(http.Dir("./static"))
+	r.PathPrefix("/").Handler(fs)
+
+	fmt.Println("Starting server on :8081")
+	log.Fatal(http.ListenAndServe(":8081", r))
 }
