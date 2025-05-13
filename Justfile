@@ -1,5 +1,5 @@
 up:
-    docker compose up --build -d
+    docker compose up --build -d --force-recreate
 
 term:
     docker exec -it pdfgen bash
