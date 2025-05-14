@@ -1,2 +1,3 @@
 # ignore golang binary
 pdfgen
+.env
