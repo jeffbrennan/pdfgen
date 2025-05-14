@@ -1,12 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type RepoParts struct {
@@ -21,6 +26,16 @@ type DirectoryParts struct {
 	root string
 	base string
 	doc  string
+}
+
+type GithubRepoResponse struct {
+	StargazersCount int       `json:"stargazers_count"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+type RepoStats struct {
+	stars    int
+	ageYears float64
 }
 
 type PDFGenResponse struct {
@@ -118,7 +133,6 @@ func setupPythonEnv(dirParts *DirectoryParts, env PythonEnv) error {
 	default:
 		return fmt.Errorf("unknown python env")
 	}
-
 }
 
 func setupNodeEnv(dirParts *DirectoryParts) error {
@@ -545,10 +559,96 @@ func cleanupRepo(parts *RepoParts) error {
 	return err
 }
 
+func getGithubAPIResponseRepo(owner string, repo string) ([]byte, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%v/%v", owner, repo)
+	log.Printf("requesting a response from %s...", url)
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = godotenv.Load()
+	if err != nil {
+		log.Fatalf("Error loading .env file: %v", err)
+	}
+
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		log.Fatal("GITHUB_TOKEN not set in .env file")
+	}
+
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %v", token))
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := client.Do(req)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer resp.Body.Close()
+	bodyText, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return bodyText, nil
+}
+
+func parseGithubAPIResponse(responseBody []byte) (*RepoStats, error) {
+	var response GithubRepoResponse
+	err := json.Unmarshal(responseBody, &response)
+	if err != nil {
+		return &RepoStats{}, err
+	}
+	ageYears := time.Since(response.CreatedAt).Hours() / (24 * 365.25)
+
+	return &RepoStats{
+		stars:    response.StargazersCount,
+		ageYears: ageYears,
+	}, nil
+
+}
+
+func validateRepo(parts *RepoParts) error {
+	// guard against improper usage only accepting large, established projects
+	minNumStars := 100
+	minNumStarsNewRepo := 1000
+	minRepoAgeYears := 1.0
+
+	response, err := getGithubAPIResponseRepo(parts.owner, parts.repo)
+	if err != nil {
+		return err
+	}
+
+	repoStats, err := parseGithubAPIResponse(response)
+	if err != nil {
+		return err
+	}
+
+	if repoStats.stars < minNumStars {
+		return fmt.Errorf("repo has less than %d stars", minNumStars)
+	}
+
+	if (repoStats.ageYears < minRepoAgeYears) && (repoStats.stars < minNumStarsNewRepo) {
+		return fmt.Errorf("repo is less than %f years old and has less than %d stars", minRepoAgeYears, minNumStarsNewRepo)
+	}
+
+	log.Printf("%s/%s is valid", parts.owner, parts.repo)
+	return nil
+}
+
 func pdfgen(url string) (PDFGenResponse, error) {
 	parts, err := parseRepoURL(url)
 	if err != nil {
 		return PDFGenResponse{}, fmt.Errorf("error parsing URL: %s", err)
+	}
+
+	err = validateRepo(parts)
+	if err != nil {
+		return PDFGenResponse{}, fmt.Errorf("error validating repo: %s", err)
 	}
 
 	err = updateRepo(parts)
