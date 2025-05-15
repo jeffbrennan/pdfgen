@@ -18,3 +18,6 @@ reload:
     just up
     just front
     just logs
+
+test:
+    go test ./...
