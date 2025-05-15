@@ -1,3 +1,4 @@
 # ignore golang binary
-pdfgen
+/pdfgen
 .env
+.DS_Store
