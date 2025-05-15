@@ -1,7 +1,15 @@
 services:
-  pdfgen:
-    build: .
-    ports:
-      - "8081:8081"
-    image: pdfgen
-    container_name: pdfgen
+    pdfgen:
+        # build: .
+        # container_name: pdfgen
+        labels:
+            - "app=pdfgen"
+        ports:
+            - "8081:8081"
+        image: pdfgen
+        secrets:
+            - GITHUB_TOKEN
+
+secrets:
+    GITHUB_TOKEN:
+        external: true
