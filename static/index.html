@@ -1,72 +1,81 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>pdfgen</title>
+        <link rel="stylesheet" href="styles.css" />
+    </head>
 
-<head>
-  <meta charset="UTF-8">
-  <title>pdfgen</title>
-  <link rel="stylesheet" href="styles.css">
-</head>
+    <body>
+        <h1>pdfgen</h1>
+        <form id="pdfForm">
+            <input
+                type="text"
+                name="url"
+                placeholder="enter a github url"
+                required
+            />
+            <button type="submit">Submit</button>
+        </form>
+        <div id="logContainer"></div>
+        <script>
+            const form = document.getElementById("pdfForm");
+            const logContainer = document.getElementById("logContainer");
 
-<body>
-  <h1>pdfgen</h1>
-  <form id="pdfForm">
-    <input type="text" name="url" placeholder="enter a github url" required />
-    <button type="submit">Submit</button>
-  </form>
-  <div id="logContainer"></div>
-  <script>
-    const form = document.getElementById('pdfForm');
-    const logContainer = document.getElementById('logContainer');
+            const eventSource = new EventSource("/stream-logs");
+            eventSource.onmessage = function (e) {
+                const p = document.createElement("p");
+                p.textContent = e.data;
+                logContainer.appendChild(p);
+            };
 
-    const eventSource = new EventSource('/stream-logs');
-    eventSource.onmessage = function (e) {
-      const p = document.createElement('p');
-      p.textContent = e.data;
-      logContainer.appendChild(p);
-    };
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                logContainer.innerHTML = "";
 
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      logContainer.innerHTML = "";
+                const formData = new FormData(form);
+                const params = new URLSearchParams(formData);
 
-      const formData = new FormData(form);
-      const params = new URLSearchParams(formData);
-
-      fetch('/generate-pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString()
-      })
-        .then(response => {
-          if (!response.ok) {
-            return response.text().then(text => { throw new Error(text); });
-          }
-          let filename = "output.pdf";
-          const cd = response.headers.get("Content-Disposition");
-          if (cd && cd.indexOf("filename=") !== -1) {
-            const match = cd.match(/filename="?([^"]+)"?/);
-            if (match && match[1]) {
-              filename = match[1];
-            }
-          }
-          return response.blob().then(blob => ({ blob, filename }));
-        })
-        .then(({ blob, filename }) => {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-        })
-        .catch(err => {
-          const p = document.createElement('p');
-          p.textContent = "Error: " + err.message;
-          logContainer.appendChild(p);
-        });
-    });
-  </script>
-</body>
-
+                fetch("/generate-pdf", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    body: params.toString(),
+                })
+                    .then((response) => {
+                        if (!response.ok) {
+                            return response.text().then((text) => {
+                                throw new Error(text);
+                            });
+                        }
+                        let filename = "output.pdf";
+                        const cd = response.headers.get("Content-Disposition");
+                        if (cd && cd.indexOf("filename=") !== -1) {
+                            const match = cd.match(/filename="?([^"]+)"?/);
+                            if (match && match[1]) {
+                                filename = match[1];
+                            }
+                        }
+                        return response
+                            .blob()
+                            .then((blob) => ({ blob, filename }));
+                    })
+                    .then(({ blob, filename }) => {
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                    })
+                    .catch((err) => {
+                        const p = document.createElement("p");
+                        p.textContent = "Error: " + err.message;
+                        logContainer.appendChild(p);
+                    });
+            });
+        </script>
+    </body>
 </html>
