@@ -70,7 +70,7 @@ func generateSphinxPDF(parts *models.RepoParts, dirParts *models.DirectoryParts)
 	}
 
 	// TODO: handle case where docs group does not exist
-	logging.PublishLog("Generating docs as Latex...")
+	logging.PublishLog("Generating docs as LaTeX...")
 	out, err := utils.RunCommand([]string{
 		"uv",
 		"run",
@@ -94,7 +94,7 @@ func generateSphinxPDF(parts *models.RepoParts, dirParts *models.DirectoryParts)
 
 	outputName := parts.Repo + "_" + strings.ReplaceAll(parts.Directory, "/", "_")
 
-	logging.PublishLog("Converting Latex to PDF...")
+	logging.PublishLog("Converting LaTeX to PDF...")
 	out, err = utils.RunCommand(
 		[]string{
 			"/bin/sh",
